@@ -1,0 +1,57 @@
+# systemd unit for the PORPASS processing daemon (porpass-proc).
+#
+# Install:
+#   sudo cp deploy/porpass-daemon.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now porpass-daemon
+#
+# Edit the paths marked EDIT-ME to match the DEV server before installing.
+# See deploy/README.md for the full step-by-step.
+
+[Unit]
+Description=PORPASS processing daemon (porpass-proc)
+# Wait for real network connectivity — the daemon connects to a remote MariaDB.
+After=network-online.target
+Wants=network-online.target
+# porpass-storage is a shared network mount; block start until it is mounted.
+# EDIT-ME: set to the actual mount point.
+RequiresMountsFor=/mnt/porpass-storage
+
+[Service]
+Type=simple
+
+# Dedicated unprivileged service account that owns the code + can read/write the
+# shared storage mount (see README for uid/gid alignment with porpass-web).
+# EDIT-ME.
+User=porpass
+Group=porpass
+
+# All configuration (DB creds, storage path, GRASP_BIN, DAEMON_*) lives in this
+# file. It contains the DB password, so it must be chmod 600 and root-owned (or
+# owned by the service user). systemd reads values literally — no shell
+# expansion — so a '$' in the password needs no escaping.
+EnvironmentFile=/etc/porpass-daemon/porpass-daemon.env
+
+# Run inside the porpass-proc conda env so BOTH `porpass-daemon` and the `grasp`
+# it shells out to are on PATH, and GRaSP's native deps (numpy/scipy/…) are
+# properly activated. --no-capture-output keeps stdout/stderr flowing to the
+# journal and forwards signals so the daemon's graceful SIGTERM shutdown works.
+# EDIT-ME: conda base path.
+ExecStart=/opt/miniconda3/bin/conda run --no-capture-output -n porpass-proc porpass-daemon
+
+Restart=on-failure
+RestartSec=10
+
+# Allow an in-flight GRaSP job to finish on stop before systemd sends SIGKILL.
+TimeoutStopSec=900
+KillSignal=SIGTERM
+
+# --- Hardening (optional; relax if it conflicts with your paths) -------------
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectControlGroups=true
+ProtectKernelTunables=true
+
+[Install]
+WantedBy=multi-user.target
