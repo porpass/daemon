@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 The format is based on Keep a Changelog, and this project adheres to PEP 440 versioning.
 
 ## [Unreleased]
+
+## [0.1.0a2] - 2026-07-19
 ### Added
 - The daemon now owns the Contract A schema generator (`porpass_daemon.schema.generate`),
   extracted from GRaSP so the science library no longer ships web-form scaffolding.

@@ -1,7 +1,9 @@
-# Deploying porpass-daemon to the DEV server (porpass-proc)
+# Deploying the porpass-daemon production service (porpass-proc)
 
-Every configuration step to stand the daemon up on the DEV server, in order.
-The target profile (confirmed for DEV):
+Every configuration step to stand the **production** daemon up as a systemd
+service, in order. (The development daemon is not a service — it is run ad-hoc
+from a source checkout; see [Two environments](#two-environments-prod-service-vs-dev-ad-hoc)
+below.) The target profile:
 
 - **Host / init:** Linux with **systemd**
 - **GRaSP:** installed into the **same conda env** as the daemon (`porpass-proc`),
@@ -19,6 +21,73 @@ claim the next queued job → download its inputs from the archives → render
 `job.toml` → run GRaSP (streaming to `run.log`) → write `manifest.json` → record
 the terminal status. The whole pipeline has been validated against real GRaSP,
 the real database, the PDS archive, and the shared mount.
+
+---
+
+## Two environments: prod (service) vs dev (ad-hoc)
+
+The daemon is one codebase run as two configured instances — there is no repo
+fork and no `--prod` flag. All configuration comes from the environment
+(`config.py`), so an "environment" is just a set of env values.
+
+|                       | **Production**                              | **Development**                         |
+|-----------------------|---------------------------------------------|-----------------------------------------|
+| How it runs           | systemd service (`porpass-daemon`)          | ad-hoc: `porpass-daemon` in a checkout  |
+| Config source         | `/etc/porpass-daemon/porpass-daemon.env`    | repo-root `.env` (loaded by `load_env`) |
+| `DB_DATABASE`         | `porpass`                                   | `porpass_dev` (local) / `porpass-dev` (server) |
+| `PORPASS_STORAGE_PATH`| prod mount (e.g. `/mnt/porpass-storage`)    | a dev-only path                         |
+| GRaSP                 | **pinned** to the released tag              | **editable** (`pip install -e` a checkout) |
+| Env template          | [`porpass-daemon.env.example`](porpass-daemon.env.example) | repo-root [`.env.example`](../.env.example) |
+
+**Database names (three of them):**
+
+| Where | `DB_DATABASE` |
+|---|---|
+| Production (server) | `porpass` |
+| Developer environment (server) | `porpass-dev` |
+| Local machine (your Mac) | `porpass_dev` |
+
+Note the separator: the **server** dev DB is `porpass-dev` (hyphen); the **local**
+dev DB is `porpass_dev` (underscore). The hyphen makes `porpass-dev` a
+non-bareword identifier, so it must be **backtick-quoted in SQL** (e.g.
+`` GRANT … ON `porpass-dev`.* ``). It needs no quoting as a plain `DB_DATABASE`
+value — the daemon passes it straight to the connection driver.
+
+### Two hard isolation rules
+
+These are what make it safe to run a dev daemon at all. Both are keyed on
+environment values, so getting them wrong silently crosses the streams:
+
+1. **Different `DB_DATABASE`.** The atomic claim is
+   `UPDATE processing_jobs ... WHERE status='queued'` scoped to the connected
+   database, so separate databases (prod `porpass` vs a dev `porpass_dev` /
+   `porpass-dev`) mean neither instance can ever see the other's jobs. Ideally
+   different DB hosts too.
+2. **Different `PORPASS_STORAGE_PATH`.** Both instances publish schema artifacts
+   to `{storage}/schemas/` on startup. If dev shares prod's storage while running
+   unreleased GRaSP, it clobbers the `schemas/` that **prod-web** reads. Point dev
+   at a dev-only path (or set `DAEMON_PUBLISH_SCHEMAS_ON_START=0`).
+
+Because dev is hand-run, the usual failure is a stale dev `.env` still pointing
+at prod. The startup banner prints the target up front —
+`worker <id> starting (db=porpass_dev@<host>, storage=<path>, ...)` — so glance at
+it and Ctrl-C if it says `db=porpass`.
+
+### Running the dev daemon (ad-hoc)
+
+```sh
+# in a dev checkout of porpass/daemon
+cp .env.example .env
+# edit .env: DB_DATABASE=porpass_dev (local) or porpass-dev (on the server),
+#            a DEV PORPASS_STORAGE_PATH, DAEMON_WORKER_ID=dev-local
+
+# GRaSP editable, so you can test unreleased science end-to-end:
+pip install -e /path/to/your/grasp/checkout      # into your dev env
+
+porpass-daemon            # runs the poll loop; check the banner names porpass_dev
+```
+
+The rest of this document is the **production** service install.
 
 ---
 
@@ -83,15 +152,23 @@ The daemon needs GRaSP **two ways**, and the same-env model satisfies both:
 - **on `PATH`** (`GRASP_BIN=grasp`) — it shells out to `grasp run` to process a
   job.
 
+**Production pins GRaSP to the released tag** — so every schema artifact prod
+publishes is reproducible and matches the forms published web builds against:
+
 ```sh
-sudo -u porpass /opt/miniconda3/envs/porpass-proc/bin/pip install <grasp-package-or-path>
+sudo -u porpass /opt/miniconda3/envs/porpass-proc/bin/pip install \
+  "grasp @ git+https://github.com/porpass/grasp@v0.6.0a1"
 # verify BOTH: the CLI resolves, and the package imports
 /opt/miniconda3/envs/porpass-proc/bin/grasp --help
 /opt/miniconda3/envs/porpass-proc/bin/python -c "import grasp; print(grasp.__version__)"
 ```
 
 Confirm the versions line up: the daemon stamps each schema artifact with the
-`grasp_version` it generated from, and the web reads them.
+`grasp_version` it generated from, and the web reads them. The importable
+distribution's version metadata **must** match the tag — if a stale editable
+install leaves it reading an older version, artifacts get mis-stamped; a clean
+`pip install` of the tag (as above) is the fix. (Dev deliberately differs here:
+it installs GRaSP editable so unreleased science can be exercised.)
 
 ---
 
@@ -129,12 +206,15 @@ porpass-proc host**:
 ```sql
 -- least-privilege: the daemon reads observations/files and updates
 -- processing_jobs; it never alters schema or deletes job rows.
+-- Production database is `porpass`. The server dev DB is `porpass-dev` and the
+-- local dev DB is `porpass_dev` — for the hyphenated one, backtick-quote the
+-- name in every statement (e.g. GRANT ... ON `porpass-dev`.processing_jobs ...).
 CREATE USER 'porpass_proc'@'<porpass-proc-ip>' IDENTIFIED BY '<password>';
-GRANT SELECT ON porpass_dev.observations       TO 'porpass_proc'@'<porpass-proc-ip>';
-GRANT SELECT ON porpass_dev.lrs_files          TO 'porpass_proc'@'<porpass-proc-ip>';
-GRANT SELECT ON porpass_dev.sharad_files       TO 'porpass_proc'@'<porpass-proc-ip>';
-GRANT SELECT ON porpass_dev.marsis_files       TO 'porpass_proc'@'<porpass-proc-ip>';
-GRANT SELECT, UPDATE ON porpass_dev.processing_jobs TO 'porpass_proc'@'<porpass-proc-ip>';
+GRANT SELECT ON porpass.observations       TO 'porpass_proc'@'<porpass-proc-ip>';
+GRANT SELECT ON porpass.lrs_files          TO 'porpass_proc'@'<porpass-proc-ip>';
+GRANT SELECT ON porpass.sharad_files       TO 'porpass_proc'@'<porpass-proc-ip>';
+GRANT SELECT ON porpass.marsis_files       TO 'porpass_proc'@'<porpass-proc-ip>';
+GRANT SELECT, UPDATE ON porpass.processing_jobs TO 'porpass_proc'@'<porpass-proc-ip>';
 FLUSH PRIVILEGES;
 ```
 
@@ -144,7 +224,7 @@ FLUSH PRIVILEGES;
 - **TLS (recommended for a remote DB):** if the server enforces TLS, we'll need
   to pass CA/cert options to the connection. `pymysql` supports an `ssl` config;
   the daemon does not wire TLS options yet — flag it and we'll add
-  `DB_SSL_CA`/related env vars before a TLS-required DEV DB. _(pending)_
+  `DB_SSL_CA`/related env vars before a TLS-required DB. _(pending)_
 - Quick connectivity check from the daemon host (no daemon needed):
   ```sh
   /opt/miniconda3/envs/porpass-proc/bin/python -c \
@@ -155,17 +235,19 @@ FLUSH PRIVILEGES;
 
 ## 7. The environment file (all config + secrets)
 
-Create `/etc/porpass-daemon/porpass-daemon.env`. This is the single source of
-configuration in production — there is **no `.env` in the deployed repo**; the
-daemon reads its process environment, which systemd populates from this file.
+Create `/etc/porpass-daemon/porpass-daemon.env` (start from
+[`deploy/porpass-daemon.env.example`](porpass-daemon.env.example)). This is the
+single source of configuration in production — there is **no `.env` in the
+deployed repo**; the daemon reads its process environment, which systemd
+populates from this file.
 
 ```ini
 # /etc/porpass-daemon/porpass-daemon.env   (chmod 600, owned by porpass or root)
 
-# Database (remote MariaDB)
+# Database (remote MariaDB) — prod database is `porpass` (dev: porpass-dev / porpass_dev)
 DB_HOST=<db-host>
 DB_PORT=3306
-DB_DATABASE=porpass_dev
+DB_DATABASE=porpass
 DB_USERNAME=porpass_proc
 DB_PASSWORD=<password>            # literal; systemd does NOT expand '$'
 
@@ -247,8 +329,8 @@ journalctl -u porpass-daemon -f          # follow logs
 Expected on a healthy start:
 
 ```
-worker <host>-<pid> starting (storage=/mnt/porpass-storage, poll=5.0s)
-database connection ok (porpass_proc@<db-host>:3306/porpass_dev)
+worker <host>-<pid> starting (db=porpass@<db-host>, storage=/mnt/porpass-storage, poll=5.0s)
+database connection ok (porpass_proc@<db-host>:3306/porpass)
 published 7 schema artifact(s) to /mnt/porpass-storage/schemas
 ```
 
@@ -311,9 +393,9 @@ this at the privilege level.
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `DB_HOST` | yes | `localhost` | MariaDB host (remote on DEV) |
+| `DB_HOST` | yes | `localhost` | MariaDB host (remote in production) |
 | `DB_PORT` | no | `3306` | MariaDB port |
-| `DB_DATABASE` | yes | `porpass` | Database name (`porpass_dev` on DEV) |
+| `DB_DATABASE` | yes | `porpass` | Database name — prod `porpass`, server dev `porpass-dev`, local dev `porpass_dev` |
 | `DB_USERNAME` | yes | `porpass` | DB user (`porpass_proc`) |
 | `DB_PASSWORD` | yes | — | DB password (literal in env file) |
 | `PORPASS_STORAGE_PATH` | **yes** | — | Shared storage mount root; daemon exits if unset |
@@ -368,13 +450,13 @@ porpass-daemon --reap-once                     # requeue stale 'running' jobs
 
 The atomic claim is race-safe, so you can run more than one instance later
 (e.g. a templated `porpass-daemon@.service`) once throughput demands it. Each
-gets a distinct `claimed_by`. Start with a single instance on DEV.
+gets a distinct `claimed_by`. Start with a single production instance.
 
 ---
 
 ## Appendix: local dev (macOS) storage permissions
 
-This is **macOS-local-dev only** — the DEV/production server uses the NFS mount
+This is **macOS-local-dev only** — the production server uses the NFS mount
 plus uid/gid alignment described above, not this ACL method.
 
 On a single Mac the web app (Apache/PHP under XAMPP, running as `daemon`) and the
