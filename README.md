@@ -28,6 +28,39 @@ For each queued job the daemon:
 A running job can be **cancelled** — the web sets `cancel_requested`, the daemon
 terminates GRaSP, discards partial output, and marks the job `cancelled`.
 
+## Runtime manifest (`runtime.json`)
+
+On every startup the daemon writes a small version manifest to
+`{PORPASS_STORAGE_PATH}/runtime.json`, which the web frontend reads to show the
+live daemon and GRaSP versions in its footer. This reuses the shared-storage
+pattern already used for schema artifacts — there is no HTTP surface, and the
+web has no dependency on the daemon being up: if the daemon is stopped, the file
+still reports the versions it last ran with.
+
+```json
+{
+  "daemon": "0.1.0a2",
+  "grasp": "0.6.0a1",
+  "published_at": "2026-07-19T15:22:00Z"
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `daemon` | The daemon's own version, from `porpass_daemon.__version__` |
+| `grasp` | The GRaSP version the daemon is running against; `"unknown"` if GRaSP isn't installed |
+| `published_at` | ISO-8601 UTC (`Z`) timestamp of when the manifest was written |
+
+Contract notes for consumers:
+
+- **Version strings are verbatim**, pre-release suffixes included (`0.1.0a2`,
+  `0.1.0-alpha.4`). Nothing is normalised or stripped — display as-is.
+- **Written atomically** (temp file + `os.replace`) and mode **`0644`**, so a
+  reader running as another user never sees a partial or unreadable file.
+- **Overwritten on each start** — it is a snapshot, never appended or merged.
+- Publishing is **best-effort**: a failure is logged and the daemon still runs
+  jobs. There is no schema validation on this file yet.
+
 ## Boundaries (hard rules)
 
 - Never modifies the porpass web repo or the database schema.

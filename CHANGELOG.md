@@ -3,9 +3,16 @@
 All notable changes to this project are documented here.
 The format is based on Keep a Changelog, and this project adheres to PEP 440 versioning.
 
-## [Unreleased]
+## [0.1.0a3]- 2026-07-19
+### Added
+- The daemon publishes a runtime version manifest to
+  `{PORPASS_STORAGE_PATH}/runtime.json` on every startup, so the web frontend can
+  display the live daemon and GRaSP versions without an HTTP endpoint or any
+  coupling to daemon uptime. Written atomically (temp file + `os.replace`) and
+  mode `0644`, since the web reads it cold on each request as a different user.
+  See "Runtime manifest" in the README for the format.
 
-## [0.1.0a2] - 2026-07-19
+## [0.1.0a2] - 2026-07-17
 ### Added
 - The daemon now owns the Contract A schema generator (`porpass_daemon.schema.generate`),
   extracted from GRaSP so the science library no longer ships web-form scaffolding.
