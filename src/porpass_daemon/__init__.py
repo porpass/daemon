@@ -6,4 +6,4 @@ Contract C manifest back to shared storage. All coupling with porpass-web is
 through the three frozen contracts and the shared filesystem.
 """
 
-__version__ = "0.1.0a1"
+__version__ = "0.1.0a2"

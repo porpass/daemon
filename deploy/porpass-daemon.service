@@ -1,11 +1,17 @@
-# systemd unit for the PORPASS processing daemon (porpass-proc).
+# systemd unit for the PORPASS processing daemon (porpass-proc) — PRODUCTION.
+#
+# This is the managed PRODUCTION service. The DEV daemon is NOT a service; it is
+# run ad-hoc from a source checkout with its own `.env` (see deploy/README.md and
+# the repo-root .env.example). The EnvironmentFile below therefore carries the
+# PRODUCTION config (DB_DATABASE=porpass, the prod storage mount), and the
+# porpass-proc conda env is where GRaSP is pinned to the released tag.
 #
 # Install:
 #   sudo cp deploy/porpass-daemon.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now porpass-daemon
 #
-# Edit the paths marked EDIT-ME to match the DEV server before installing.
+# Edit the paths marked EDIT-ME to match the production host before installing.
 # See deploy/README.md for the full step-by-step.
 
 [Unit]

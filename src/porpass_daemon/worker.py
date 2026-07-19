@@ -165,8 +165,10 @@ class WorkerLoop:
         """Poll for work until the stop event is set."""
         cfg = self._config
         log.info(
-            "worker %s starting (storage=%s, poll=%.1fs)",
+            "worker %s starting (db=%s@%s, storage=%s, poll=%.1fs)",
             cfg.worker_id,
+            cfg.db_database,
+            cfg.db_host,
             cfg.storage_path,
             cfg.poll_interval,
         )
