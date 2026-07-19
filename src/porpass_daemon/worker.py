@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pymysql
 
-from . import db, grasp_runner, inputs, manifest, reaper, render, schema
+from . import db, grasp_runner, inputs, manifest, reaper, render, runtime, schema
 from .config import Config
 from .inputs import ResolvedInputs
 from .logging_conf import get_logger
@@ -173,6 +173,7 @@ class WorkerLoop:
             cfg.poll_interval,
         )
         self._check_db()
+        self._publish_runtime_manifest()
         if cfg.publish_schemas_on_start:
             self._publish_schemas()
 
@@ -357,6 +358,20 @@ class WorkerLoop:
             )
         finally:
             conn.close()
+
+    def _publish_runtime_manifest(self) -> None:
+        """Publish the version manifest on startup, best-effort.
+
+        The web reads ``runtime.json`` to show which daemon and GRaSP versions
+        are live. Losing it degrades a footer, so a failure here is logged and
+        swallowed rather than stopping the daemon from claiming jobs — the same
+        posture as :meth:`_publish_schemas`.
+        """
+        try:
+            path = runtime.publish_runtime_manifest(self._config)
+            log.info("published runtime manifest to %s", path)
+        except OSError as exc:
+            log.warning("runtime manifest publish skipped: %s", exc)
 
     def _publish_schemas(self) -> None:
         """Publish schema artifacts on startup, best-effort.
