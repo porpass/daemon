@@ -1,13 +1,13 @@
 # porpass-daemon
 
-The PORPASS processing daemon (`porpass-proc`): a standalone worker that runs on
+The PORPASS processing daemon (`porpass-daemon`): a standalone worker that runs on
 a separate host, claims queued GRaSP jobs from the PORPASS database, executes
 them, and writes results back to shared storage.
 
 It is decoupled from the porpass web app — the two communicate
 only through three frozen contracts (schema artifact, per-job config, result
 manifest; see the web repo's `docs/processing_contracts.md`), the shared
-`porpass-storage` filesystem, and the MariaDB database.
+`storage` filesystem, and the MariaDB database.
 
 ## What it does
 
@@ -76,7 +76,7 @@ Contract notes for consumers:
 
 ```sh
 conda env create -f environment.yml
-conda activate porpass-proc
+conda activate porpass-daemon
 pip install -e '.[dev]'
 
 cp .env.example .env      # fill in DB creds + PORPASS_STORAGE_PATH
@@ -86,4 +86,4 @@ pytest                    # run the test suite
 ```
 
 `GRASP_BIN` may point at the real `grasp` console script or, in tests, a fake
-binary. See `deploy/README.md` for systemd installation on `porpass-proc`.
+binary. See `deploy/README.md` for systemd installation on `proc`.
