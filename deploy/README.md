@@ -1,4 +1,4 @@
-# Deploying the porpass-daemon production service (porpass-proc)
+# Deploying the porpass-daemon production service
 
 Every configuration step to stand the **production** daemon up as a systemd
 service, in order. (The development daemon is not a service — it is run ad-hoc
@@ -6,11 +6,11 @@ from a source checkout; see [Two environments](#two-environments-prod-service-vs
 below.) The target profile:
 
 - **Host / init:** Linux with **systemd**
-- **GRaSP:** installed into the **same conda env** as the daemon (`porpass-proc`),
-  so the bare command `grasp` is on `PATH`
+- **GRaSP:** installed into the **same conda env** as the daemon
+  (`porpass-daemon`), so the bare command `grasp` is on `PATH`
 - **Database:** **remote** MariaDB host (daemon connects over the network)
-- **Storage:** `porpass-storage` is a **shared network mount** (NFS/SMB) also
-  mounted on `porpass-web`
+- **Storage:** the shared storage export is a **network mount** (NFS/SMB)
+  mounted on both the daemon host and the web host
 
 Anything the daemon needs from another host it reaches only two ways: the
 **database** and the **shared filesystem**. There is no HTTP API between web and
@@ -34,24 +34,15 @@ fork and no `--prod` flag. All configuration comes from the environment
 |-----------------------|---------------------------------------------|-----------------------------------------|
 | How it runs           | systemd service (`porpass-daemon`)          | ad-hoc: `porpass-daemon` in a checkout  |
 | Config source         | `/etc/porpass-daemon/porpass-daemon.env`    | repo-root `.env` (loaded by `load_env`) |
-| `DB_DATABASE`         | `porpass`                                   | `porpass_dev` (local) / `porpass-dev` (server) |
-| `PORPASS_STORAGE_PATH`| prod mount (e.g. `/mnt/porpass-storage`)    | a dev-only path                         |
+| `DB_DATABASE`         | the production database                     | a **separate** development database     |
+| `PORPASS_STORAGE_PATH`| the production storage mount                | a **separate**, dev-only path           |
 | GRaSP                 | **pinned** to the released tag              | **editable** (`pip install -e` a checkout) |
 | Env template          | [`porpass-daemon.env.example`](porpass-daemon.env.example) | repo-root [`.env.example`](../.env.example) |
 
-**Database names (three of them):**
-
-| Where | `DB_DATABASE` |
-|---|---|
-| Production (server) | `porpass` |
-| Developer environment (server) | `porpass-dev` |
-| Local machine (your Mac) | `porpass_dev` |
-
-Note the separator: the **server** dev DB is `porpass-dev` (hyphen); the **local**
-dev DB is `porpass_dev` (underscore). The hyphen makes `porpass-dev` a
-non-bareword identifier, so it must be **backtick-quoted in SQL** (e.g.
-`` GRANT … ON `porpass-dev`.* ``). It needs no quoting as a plain `DB_DATABASE`
-value — the daemon passes it straight to the connection driver.
+Give the two databases distinct names (e.g. `porpass` for production and a
+`*_dev`/`*-dev` variant for development) so the rest of this document can refer to
+them unambiguously. The exact names are yours to choose — only their being
+**different** matters (see the isolation rules).
 
 ### Two hard isolation rules
 
@@ -60,9 +51,8 @@ environment values, so getting them wrong silently crosses the streams:
 
 1. **Different `DB_DATABASE`.** The atomic claim is
    `UPDATE processing_jobs ... WHERE status='queued'` scoped to the connected
-   database, so separate databases (prod `porpass` vs a dev `porpass_dev` /
-   `porpass-dev`) mean neither instance can ever see the other's jobs. Ideally
-   different DB hosts too.
+   database, so a separate production and development database mean neither
+   instance can ever see the other's jobs. Ideally different DB hosts too.
 2. **Different `PORPASS_STORAGE_PATH`.** Both instances publish schema artifacts
    to `{storage}/schemas/` on startup. If dev shares prod's storage while running
    unreleased GRaSP, it clobbers the `schemas/` that **prod-web** reads. Point dev
@@ -70,21 +60,23 @@ environment values, so getting them wrong silently crosses the streams:
 
 Because dev is hand-run, the usual failure is a stale dev `.env` still pointing
 at prod. The startup banner prints the target up front —
-`worker <id> starting (db=porpass_dev@<host>, storage=<path>, ...)` — so glance at
-it and Ctrl-C if it says `db=porpass`.
+`worker <id> starting (db=<database>@<host>, storage=<path>, ...)` — so glance at
+it and Ctrl-C if it names the production database.
 
 ### Running the dev daemon (ad-hoc)
 
 ```sh
 # in a dev checkout of porpass/daemon
 cp .env.example .env
-# edit .env: DB_DATABASE=porpass_dev (local) or porpass-dev (on the server),
+# edit .env: DB_DATABASE=<your development database>,
 #            a DEV PORPASS_STORAGE_PATH, DAEMON_WORKER_ID=dev-local
 
+# install the daemon (environment.yml no longer does this itself):
+pip install -e .                                 # from the daemon checkout root
 # GRaSP editable, so you can test unreleased science end-to-end:
 pip install -e /path/to/your/grasp/checkout      # into your dev env
 
-porpass-daemon            # runs the poll loop; check the banner names porpass_dev
+porpass-daemon            # runs the poll loop; check the banner names your dev database
 ```
 
 The rest of this document is the **production** service install.
@@ -93,11 +85,11 @@ The rest of this document is the **production** service install.
 
 ## 0. Prerequisites
 
-- SSH access to `porpass-proc` with `sudo`.
+- SSH access to the daemon host with `sudo`.
 - A conda/miniconda installation on the host (assumed at `/opt/miniconda3`;
   adjust paths if different).
-- Network path from `porpass-proc` to the MariaDB host on port **3306**.
-- The `porpass-storage` network export reachable from `porpass-proc`.
+- Network path from the daemon host to the MariaDB host on port **3306**.
+- The shared storage export reachable from the daemon host.
 - The daemon's git repo reachable (clone URL or a tarball).
 
 ---
@@ -114,7 +106,7 @@ sudo mkdir -p /etc/porpass-daemon          # config (secrets)
 ```
 
 **uid/gid alignment (important for the shared mount):** the daemon writes job
-output that `porpass-web` reads, and vice-versa. Either give the `porpass`
+output that the web app reads, and vice-versa. Either give the `porpass`
 service user the **same uid/gid** on both hosts, or ensure the export maps both
 hosts' service users to a common owner/group with read+write. Mismatched uids
 are the most common cause of "web can't read the daemon's results" bugs.
@@ -130,16 +122,31 @@ cd /opt/porpass-daemon
 
 ---
 
-## 3. Create the conda env (installs the daemon)
+## 3. Create the conda env, then install the daemon
 
-`environment.yml` creates the `porpass-proc` env (Python 3.12) and pip-installs
-the daemon in editable mode.
+`environment.yml` provisions only the interpreter + runtime deps. Installing the
+daemon is a **separate, explicit step** — `environment.yml` deliberately does not
+carry `-e .` (conda runs its pip subprocess from the env prefix, not this repo, so
+`.` fails to resolve).
+
+**Run these as the user that owns the conda installation** (the one that installed
+`/opt/miniconda3`), *not* the service account. The service account only needs to
+*run* the env (step 8), and creating the env as a user who can't write
+`/opt/miniconda3/envs/` produces pip's *"Defaulting to user installation because
+normal site-packages is not writeable"* — the install then leaks into that user's
+`~/.local` instead of the env.
 
 ```sh
-sudo -u porpass /opt/miniconda3/bin/conda env create -f /opt/porpass-daemon/environment.yml
+# as the conda owner (e.g. your admin login), not the service user:
+/opt/miniconda3/bin/conda env create -f /opt/porpass-daemon/environment.yml
+# install the daemon with an ABSOLUTE path (never `.` — see above):
+/opt/miniconda3/bin/conda run -n porpass-daemon pip install -e /opt/porpass-daemon
 # verify the console script exists:
-/opt/miniconda3/envs/porpass-proc/bin/porpass-daemon --help
+/opt/miniconda3/envs/porpass-daemon/bin/porpass-daemon --help
 ```
+
+If a previous attempt left a half-built env, discard it first:
+`conda env remove -n porpass-daemon`.
 
 ---
 
@@ -153,14 +160,15 @@ The daemon needs GRaSP **two ways**, and the same-env model satisfies both:
   job.
 
 **Production pins GRaSP to the released tag** — so every schema artifact prod
-publishes is reproducible and matches the forms published web builds against:
+publishes is reproducible and matches the forms published web builds against.
+Again, run this as the conda owner (same reasoning as step 3):
 
 ```sh
-sudo -u porpass /opt/miniconda3/envs/porpass-proc/bin/pip install \
+/opt/miniconda3/bin/conda run -n porpass-daemon pip install \
   "grasp @ git+https://github.com/porpass/grasp@v0.6.0a1"
 # verify BOTH: the CLI resolves, and the package imports
-/opt/miniconda3/envs/porpass-proc/bin/grasp --help
-/opt/miniconda3/envs/porpass-proc/bin/python -c "import grasp; print(grasp.__version__)"
+/opt/miniconda3/envs/porpass-daemon/bin/grasp --help
+/opt/miniconda3/envs/porpass-daemon/bin/python -c "import grasp; print(grasp.__version__)"
 ```
 
 Confirm the versions line up: the daemon stamps each schema artifact with the
@@ -172,53 +180,13 @@ it installs GRaSP editable so unreleased science can be exercised.)
 
 ---
 
-## 5. Mount porpass-storage (shared network mount)
+## 5. Database access (remote MariaDB)
 
-Mount the export at a stable path (example `/mnt/porpass-storage`). Example NFS
-`/etc/fstab` line:
-
-```
-nfs-server:/export/porpass-storage  /mnt/porpass-storage  nfs  rw,hard,noatime,_netdev  0  0
-```
-
-```sh
-sudo mkdir -p /mnt/porpass-storage
-sudo mount /mnt/porpass-storage
-# the two subtrees the daemon uses:
-#   {mount}/schemas/                      <- daemon publishes here (web reads)
-#   {mount}/processing/{user_id}/{job_id} <- web creates, daemon fills in
-sudo -u porpass test -w /mnt/porpass-storage && echo "porpass can write: OK"
-```
-
-- Use `_netdev` (and `RequiresMountsFor=` in the unit, already set) so the
-  daemon doesn't start before the mount is ready.
-- Verify the `porpass` user can **read and write** — create and delete a probe
-  file as that user.
-
----
-
-## 6. Database access (remote MariaDB)
-
-The daemon uses the **same schema and credentials model** as porpass-web, just
+The daemon uses the **same schema and credentials model** as the web app, just
 from a different host. On the DB host, grant the daemon's user access **from the
-porpass-proc host**:
+daemon host**:
 
-```sql
--- least-privilege: the daemon reads observations/files and updates
--- processing_jobs; it never alters schema or deletes job rows.
--- Production database is `porpass`. The server dev DB is `porpass-dev` and the
--- local dev DB is `porpass_dev` — for the hyphenated one, backtick-quote the
--- name in every statement (e.g. GRANT ... ON `porpass-dev`.processing_jobs ...).
-CREATE USER 'porpass_proc'@'<porpass-proc-ip>' IDENTIFIED BY '<password>';
-GRANT SELECT ON porpass.observations       TO 'porpass_proc'@'<porpass-proc-ip>';
-GRANT SELECT ON porpass.lrs_files          TO 'porpass_proc'@'<porpass-proc-ip>';
-GRANT SELECT ON porpass.sharad_files       TO 'porpass_proc'@'<porpass-proc-ip>';
-GRANT SELECT ON porpass.marsis_files       TO 'porpass_proc'@'<porpass-proc-ip>';
-GRANT SELECT, UPDATE ON porpass.processing_jobs TO 'porpass_proc'@'<porpass-proc-ip>';
-FLUSH PRIVILEGES;
-```
-
-- Open port **3306** from `porpass-proc` to the DB host (security group /
+- Open port **3306** from the daemon host to the DB host (security group /
   firewall). The daemon connects over TCP to `DB_HOST`.
 - Confirm `bind-address` on the DB host allows the remote connection.
 - **TLS (recommended for a remote DB):** if the server enforces TLS, we'll need
@@ -227,13 +195,13 @@ FLUSH PRIVILEGES;
   `DB_SSL_CA`/related env vars before a TLS-required DB. _(pending)_
 - Quick connectivity check from the daemon host (no daemon needed):
   ```sh
-  /opt/miniconda3/envs/porpass-proc/bin/python -c \
+  /opt/miniconda3/envs/porpass-daemon/bin/python -c \
     "import pymysql,os; pymysql.connect(host=os.environ['DB_HOST'],port=int(os.environ['DB_PORT']),user=os.environ['DB_USERNAME'],password=os.environ['DB_PASSWORD'],database=os.environ['DB_DATABASE']).ping(); print('DB OK')"
   ```
 
 ---
 
-## 7. The environment file (all config + secrets)
+## 6. The environment file (all config + secrets)
 
 Create `/etc/porpass-daemon/porpass-daemon.env` (start from
 [`deploy/porpass-daemon.env.example`](porpass-daemon.env.example)). This is the
@@ -244,11 +212,11 @@ populates from this file.
 ```ini
 # /etc/porpass-daemon/porpass-daemon.env   (chmod 600, owned by porpass or root)
 
-# Database (remote MariaDB) — prod database is `porpass` (dev: porpass-dev / porpass_dev)
+# Database (remote MariaDB) — use the production database here (dev uses a separate one)
 DB_HOST=<db-host>
 DB_PORT=3306
-DB_DATABASE=porpass
-DB_USERNAME=porpass_proc
+DB_DATABASE=<production-database>
+DB_USERNAME=<db-user>
 DB_PASSWORD=<password>            # literal; systemd does NOT expand '$'
 
 # Shared storage mount
@@ -278,7 +246,7 @@ Notes:
 
 ---
 
-## 8. Install and start the systemd service
+## 7. Install and start the systemd service
 
 ```sh
 sudo cp /opt/porpass-daemon/deploy/porpass-daemon.service /etc/systemd/system/
@@ -288,13 +256,13 @@ sudo systemctl enable --now porpass-daemon
 sudo systemctl status porpass-daemon
 ```
 
-The unit runs the daemon via `conda run --no-capture-output -n porpass-proc`, so
+The unit runs the daemon via `conda run --no-capture-output -n porpass-daemon`, so
 GRaSP's env is activated and `grasp` is on `PATH`. It restarts on failure and
 forwards SIGTERM for graceful shutdown.
 
 ---
 
-## 9. Publish schema artifacts
+## 8. Publish schema artifacts
 
 With `DAEMON_PUBLISH_SCHEMAS_ON_START=1`, the service publishes on every start —
 so `sudo systemctl restart porpass-daemon` then checking the journal + schemas
@@ -309,18 +277,18 @@ the password):
 sudo systemd-run --uid=porpass --gid=porpass \
   --property=EnvironmentFile=/etc/porpass-daemon/porpass-daemon.env \
   --wait --pipe \
-  /opt/miniconda3/bin/conda run --no-capture-output -n porpass-proc \
+  /opt/miniconda3/bin/conda run --no-capture-output -n porpass-daemon \
   porpass-daemon --publish-schemas
 
 ls -1 /mnt/porpass-storage/schemas/      # expect SHARAD/MARSIS/LRS *.schema.json
 ```
 
-Verify porpass-web now reads these artifacts (its config forms should reflect
+Verify the web app now reads these artifacts (its config forms should reflect
 the live GRaSP version).
 
 ---
 
-## 10. Verify end to end
+## 9. Verify end to end
 
 ```sh
 journalctl -u porpass-daemon -f          # follow logs
@@ -329,12 +297,12 @@ journalctl -u porpass-daemon -f          # follow logs
 Expected on a healthy start:
 
 ```
-worker <host>-<pid> starting (db=porpass@<db-host>, storage=/mnt/porpass-storage, poll=5.0s)
-database connection ok (porpass_proc@<db-host>:3306/porpass)
+worker <host>-<pid> starting (db=<database>@<db-host>, storage=/mnt/porpass-storage, poll=5.0s)
+database connection ok (<db-user>@<db-host>:3306/<database>)
 published 7 schema artifact(s) to /mnt/porpass-storage/schemas
 ```
 
-Then submit a job from porpass-web and watch a full run in the journal:
+Then submit a job from the web app and watch a full run in the journal:
 
 ```
 claimed job <id> as <host>-<pid>
@@ -395,8 +363,8 @@ this at the privilege level.
 |---|---|---|---|
 | `DB_HOST` | yes | `localhost` | MariaDB host (remote in production) |
 | `DB_PORT` | no | `3306` | MariaDB port |
-| `DB_DATABASE` | yes | `porpass` | Database name — prod `porpass`, server dev `porpass-dev`, local dev `porpass_dev` |
-| `DB_USERNAME` | yes | `porpass` | DB user (`porpass_proc`) |
+| `DB_DATABASE` | yes | `porpass` | Database name — a distinct value per environment (production vs development) |
+| `DB_USERNAME` | yes | `porpass` | DB user the daemon connects as |
 | `DB_PASSWORD` | yes | — | DB password (literal in env file) |
 | `PORPASS_STORAGE_PATH` | **yes** | — | Shared storage mount root; daemon exits if unset |
 | `GRASP_BIN` | no | `grasp` | GRaSP executable used for `grasp run` (bare name in same-env model). Not used for schema generation, which is in-process. |
@@ -415,7 +383,7 @@ systemctl restart porpass-daemon
 journalctl -u porpass-daemon -f
 journalctl -u porpass-daemon --since "1 hour ago"
 
-# one-off maintenance (inside the porpass-proc env)
+# one-off maintenance (inside the porpass-daemon env)
 porpass-daemon --publish-schemas               # regenerate into the storage mount
 porpass-daemon --regenerate-schema --out /tmp/x  # generate anywhere; no DB/storage needed
 porpass-daemon --reap-once                     # requeue stale 'running' jobs
@@ -425,11 +393,11 @@ porpass-daemon --reap-once                     # requeue stale 'running' jobs
 
 | Symptom | Cause / fix |
 |---|---|
-| `schema publish skipped: GRaSP is not importable …` | The daemon generates artifacts in-process, so GRaSP must be **importable** in the env the unit runs under — install it into `porpass-proc` (step 4). Publish failures are non-fatal (logged as a warning); the daemon keeps claiming jobs. |
-| `GRaSP executable 'grasp' not found` during a job run | Separate from the above: `grasp run` needs the CLI on `PATH`. The unit runs via `conda run -n porpass-proc`; install GRaSP there or set `GRASP_BIN` to an absolute path. |
+| `schema publish skipped: GRaSP is not importable …` | The daemon generates artifacts in-process, so GRaSP must be **importable** in the env the unit runs under — install it into `porpass-daemon` (step 4). Publish failures are non-fatal (logged as a warning); the daemon keeps claiming jobs. |
+| `GRaSP executable 'grasp' not found` during a job run | Separate from the above: `grasp run` needs the CLI on `PATH`. The unit runs via `conda run -n porpass-daemon`; install GRaSP there or set `GRASP_BIN` to an absolute path. |
 | Job fails with a `PermissionError` writing `job.toml`/products | uid/gid or mount permissions: the service user can't write the web-created job dir. Align uids or make the export group-writable (step 1 / step 5). |
 | `configuration error: PORPASS_STORAGE_PATH is required` | The env file wasn't loaded or the var is blank. Check `EnvironmentFile=` path and that the unit was reloaded (`systemctl daemon-reload`). |
-| `Can't connect to MySQL server` / timeout | Remote DB unreachable: firewall/security group on 3306, `bind-address`, or the grant isn't for the `porpass-proc` host IP (step 6). |
+| `Can't connect to MySQL server` / timeout | Remote DB unreachable: firewall/security group on 3306, `bind-address`, or the grant isn't for the daemon host's IP (step 6). |
 | DB requires TLS | Not yet wired — the daemon needs `pymysql` `ssl` options added (`DB_SSL_CA` etc.) before a TLS-enforcing DB. Flag it and we'll add it. |
 | A job is stuck `running` after a crash | Expected until `DAEMON_REAPER_STALE_SECONDS` elapses, then the reaper requeues it. Force it now with `porpass-daemon --reap-once`. |
 | Cancel button does nothing; log shows `cancel disabled this run` | The `cancel_requested` column / `cancelled` status isn't in the DB yet. Apply the schema change; the daemon degrades gracefully until then. |
@@ -441,7 +409,7 @@ porpass-daemon --reap-once                     # requeue stale 'running' jobs
   never enters the repo or the journal.
 - DB grants are least-privilege: `SELECT` on observation/file tables,
   `SELECT`+`UPDATE` on `processing_jobs` only. No `DELETE`, no DDL.
-- Port 3306 open only from `porpass-proc` to the DB host.
+- Port 3306 open only from the daemon host to the DB host.
 - The daemon never writes the web-owned columns (`output_dir`,
   `results_deleted`, `results_deleted_at`, `rerun_of`) and never deletes job
   rows — the least-privilege grant does not need to allow those anyway.
@@ -451,43 +419,3 @@ porpass-daemon --reap-once                     # requeue stale 'running' jobs
 The atomic claim is race-safe, so you can run more than one instance later
 (e.g. a templated `porpass-daemon@.service`) once throughput demands it. Each
 gets a distinct `claimed_by`. Start with a single production instance.
-
----
-
-## Appendix: local dev (macOS) storage permissions
-
-This is **macOS-local-dev only** — the production server uses the NFS mount
-plus uid/gid alignment described above, not this ACL method.
-
-On a single Mac the web app (Apache/PHP under XAMPP, running as `daemon`) and the
-daemon (running as your login user) are two different uids sharing one local
-`porpass-storage` directory. The web creates each job dir; the daemon writes
-`job.toml` / `run.log` / `manifest.json` / products into it. Give both users
-write access via a shared group and an **inherited ACL**, so new job dirs the web
-creates are group-writable regardless of Apache's umask:
-
-```sh
-# Shared group with both users
-sudo dseditgroup -o create porpass
-sudo dseditgroup -o edit -a "$(id -un)" -t user porpass    # your login user
-sudo dseditgroup -o edit -a daemon      -t user porpass    # XAMPP's user
-
-# Group-own the tree; setgid so new dirs inherit the group
-sudo chgrp -R porpass /Users/Shared/porpass-storage
-sudo chmod -R g+rwX   /Users/Shared/porpass-storage
-sudo find /Users/Shared/porpass-storage -type d -exec chmod g+s {} +
-
-# Inherited ACL — the key step: new files/dirs under the tree automatically
-# grant the porpass group full access, so umask can't strip group-write.
-sudo chmod -R +a "group:porpass allow read,write,execute,delete,add_file,add_subdirectory,file_inherit,directory_inherit" /Users/Shared/porpass-storage
-```
-
-Notes:
-- Group membership is only picked up by **new** login sessions — open a fresh
-  terminal before running the daemon.
-- Verify: `ls -led /Users/Shared/porpass-storage` should show `drwxrwsr-x+`
-  (group `porpass`, setgid `s`, ACL `+`) with a `group:porpass … file_inherit,
-  directory_inherit` ACE.
-- The inherited ACL covers **new** files; if you ever recreate or restore the
-  `porpass-storage` tree from scratch, re-run the `chmod +a` step.
-```
