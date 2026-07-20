@@ -1,11 +1,17 @@
 # Conda environment for the PORPASS processing daemon (porpass-proc).
 #
-#   conda env create -f environment.yml
-#   conda activate porpass-proc
-#   pip install -e .
+# This provisions only the interpreter + runtime dependencies. Installing the
+# daemon itself and GRaSP are SEPARATE, explicit steps, run by the user that owns
+# the conda installation (not the service account):
 #
-# GRaSP is installed separately into (or alongside) this environment so that the
-# `grasp` console script is on PATH; see deploy/README.md.
+#   conda env create -f environment.yml
+#   conda run -n porpass-proc pip install -e /abs/path/to/daemon/checkout
+#   conda run -n porpass-proc pip install "grasp @ git+https://github.com/porpass/grasp@<tag>"
+#
+# Do NOT put `-e .` in the pip section below: conda runs its pip subprocess with a
+# working directory that is not this file's directory, so `.` resolves to the env
+# prefix and the install fails. Use an absolute path in the explicit step instead.
+# See deploy/README.md for the full prod install and the pinned-GRaSP tag.
 name: porpass-proc
 channels:
   - conda-forge
@@ -15,5 +21,3 @@ dependencies:
   - pymysql>=1.1
   - requests>=2.31
   - python-dotenv>=1.0
-  - pip:
-      - -e .

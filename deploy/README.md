@@ -81,6 +81,8 @@ cp .env.example .env
 # edit .env: DB_DATABASE=porpass_dev (local) or porpass-dev (on the server),
 #            a DEV PORPASS_STORAGE_PATH, DAEMON_WORKER_ID=dev-local
 
+# install the daemon (environment.yml no longer does this itself):
+pip install -e .                                 # from the daemon checkout root
 # GRaSP editable, so you can test unreleased science end-to-end:
 pip install -e /path/to/your/grasp/checkout      # into your dev env
 
@@ -130,16 +132,31 @@ cd /opt/porpass-daemon
 
 ---
 
-## 3. Create the conda env (installs the daemon)
+## 3. Create the conda env, then install the daemon
 
-`environment.yml` creates the `porpass-proc` env (Python 3.12) and pip-installs
-the daemon in editable mode.
+`environment.yml` provisions only the interpreter + runtime deps. Installing the
+daemon is a **separate, explicit step** — `environment.yml` deliberately does not
+carry `-e .` (conda runs its pip subprocess from the env prefix, not this repo, so
+`.` fails to resolve).
+
+**Run these as the user that owns the conda installation** (the one that installed
+`/opt/miniconda3`), *not* the service account. The service account only needs to
+*run* the env (step 8), and creating the env as a user who can't write
+`/opt/miniconda3/envs/` produces pip's *"Defaulting to user installation because
+normal site-packages is not writeable"* — the install then leaks into that user's
+`~/.local` instead of the env.
 
 ```sh
-sudo -u porpass /opt/miniconda3/bin/conda env create -f /opt/porpass-daemon/environment.yml
+# as the conda owner (e.g. your admin login), not the service user:
+/opt/miniconda3/bin/conda env create -f /opt/porpass-daemon/environment.yml
+# install the daemon with an ABSOLUTE path (never `.` — see above):
+/opt/miniconda3/bin/conda run -n porpass-proc pip install -e /opt/porpass-daemon
 # verify the console script exists:
 /opt/miniconda3/envs/porpass-proc/bin/porpass-daemon --help
 ```
+
+If a previous attempt left a half-built env, discard it first:
+`conda env remove -n porpass-proc`.
 
 ---
 
@@ -153,10 +170,11 @@ The daemon needs GRaSP **two ways**, and the same-env model satisfies both:
   job.
 
 **Production pins GRaSP to the released tag** — so every schema artifact prod
-publishes is reproducible and matches the forms published web builds against:
+publishes is reproducible and matches the forms published web builds against.
+Again, run this as the conda owner (same reasoning as step 3):
 
 ```sh
-sudo -u porpass /opt/miniconda3/envs/porpass-proc/bin/pip install \
+/opt/miniconda3/bin/conda run -n porpass-proc pip install \
   "grasp @ git+https://github.com/porpass/grasp@v0.6.0a1"
 # verify BOTH: the CLI resolves, and the package imports
 /opt/miniconda3/envs/porpass-proc/bin/grasp --help
