@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "porpass-daemon"
-version = "0.1.0a4"
+version = "0.1.0a5"
 description = "PORPASS processing daemon (porpass-proc): claims queued GRaSP jobs and runs them."
 readme = "README.md"
 requires-python = ">=3.12"

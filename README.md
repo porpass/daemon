@@ -39,7 +39,7 @@ still reports the versions it last ran with.
 
 ```json
 {
-  "daemon": "0.1.0a4",
+  "daemon": "0.1.0a5",
   "grasp": "0.6.0a1",
   "published_at": "2026-07-21T13:03:03Z"
 }
