@@ -1,0 +1,97 @@
+name: Feature Request
+description: Suggest new functionality or an improvement to the PORPASS processing daemon.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for your suggestion! Please describe what you'd like and why.
+
+        Before filing, please search existing issues to avoid duplicates. If you find a related one, add a comment there instead.
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: A short description of the request.
+      placeholder: e.g. Add an optional DAEMON_LOG_FILE setting to write daemon logs to a file
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of the daemon does this relate to? Choose the closest match, or "Other / not sure".
+      options:
+        - Job claiming / heartbeat / concurrency
+        - Reaper / stale job recovery
+        - Job cancellation
+        - Input resolution / archive download / staging
+        - job.toml rendering
+        - GRaSP invocation / run.log capture
+        - Manifest writing (manifest.json)
+        - Schema generation / publishing
+        - Runtime manifest (runtime.json)
+        - Database access / queries
+        - Configuration / environment variables
+        - Logging
+        - Deployment / systemd unit
+        - Installation / packaging / dependencies
+        - Documentation
+        - Other / not sure
+    validations:
+      required: false
+  - type: dropdown
+    id: instrument
+    attributes:
+      label: Instrument
+      description: Which instrument(s) is this relevant to, if any?
+      options:
+        - Not applicable / all
+        - SHARAD
+        - MARSIS
+        - LRS
+        - Multiple
+    validations:
+      required: false
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or motivation
+      description: What are you trying to do, and what makes it hard or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: >-
+        What would you like to see? Describe the behavior, and the proposed interface if you have
+        one in mind — a new configuration variable, CLI flag, or module.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds you currently use, or other approaches you thought about.
+    validations:
+      required: false
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility impact
+      description: >-
+        Optional. Would this change existing behavior — configuration variables, CLI flags,
+        the daemon's database interactions, or the on-disk artifacts it writes
+        (`job.toml`, `manifest.json`, `runtime.json`, schema artifacts)? Note anything that could
+        affect existing deployments or downstream consumers of those artifacts.
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else that helps — references, example configurations, or similar tools.
+    validations:
+      required: false

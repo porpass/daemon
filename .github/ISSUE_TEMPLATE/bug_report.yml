@@ -1,0 +1,196 @@
+name: Bug Report
+description: Report something in the PORPASS processing daemon that is broken, incorrect, or not behaving as expected.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping test the daemon! Please fill out the fields below so the problem can be reproduced and triaged quickly.
+
+        Before filing, please search existing issues to avoid duplicates. If you find a related one, add a comment there instead.
+
+        **Please redact secrets.** The daemon's configuration holds database credentials — remove `DB_PASSWORD`, hostnames, and any other sensitive values from anything you paste.
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: A short description of the problem.
+      placeholder: e.g. Reaper requeues a job that is still running and heartbeating
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of the daemon does this affect? Choose the closest match, or "Other / not sure".
+      options:
+        - Job claiming / heartbeat / concurrency
+        - Reaper / stale job recovery
+        - Job cancellation
+        - Input resolution / archive download / staging
+        - job.toml rendering
+        - GRaSP invocation / run.log capture
+        - Manifest writing (manifest.json)
+        - Schema generation / publishing
+        - Runtime manifest (runtime.json)
+        - Database access / queries
+        - Configuration / environment variables
+        - Logging
+        - Deployment / systemd unit
+        - Installation / packaging / dependencies
+        - Documentation
+        - Other / not sure
+    validations:
+      required: false
+  - type: dropdown
+    id: run_mode
+    attributes:
+      label: How was the daemon running?
+      options:
+        - systemd service (production)
+        - Ad-hoc from a source checkout (development)
+        - One-off CLI (--publish-schemas / --regenerate-schema / --reap-once)
+        - Not applicable (e.g. documentation)
+    validations:
+      required: true
+  - type: dropdown
+    id: instrument
+    attributes:
+      label: Instrument
+      description: If the problem involves a specific job, which instrument's data was it processing?
+      options:
+        - Not applicable
+        - SHARAD
+        - MARSIS
+        - LRS
+        - Multiple
+    validations:
+      required: false
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: >-
+        The exact steps that trigger the problem. Include the command you ran and, if a specific job
+        is involved, how it was queued and what state it reached.
+      placeholder: |
+        1. Start the daemon with '...'
+        2. Queue a job for observation '...'
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: >-
+        What actually happened? Paste the full traceback or error message if there is one,
+        and the job's terminal status if a job was involved.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Daemon logs
+      description: >-
+        Relevant daemon output — `journalctl -u porpass-daemon` when running under systemd,
+        or stderr when run ad-hoc. Include the startup banner line if you have it.
+        Redact hostnames and credentials.
+      render: shell
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Daemon version
+      description: Release tag, or commit hash if running from a branch.
+      placeholder: e.g. v0.1.0a4, or commit a1b2c3d
+    validations:
+      required: true
+  - type: input
+    id: grasp_version
+    attributes:
+      label: GRaSP version
+      description: >-
+        The GRaSP version the daemon is running against, if relevant. Both versions are
+        recorded in the published runtime.json.
+      placeholder: e.g. v0.6.0a1
+    validations:
+      required: false
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: e.g. 3.12.4
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: e.g. Rocky Linux 9, Ubuntu 22.04, macOS 14
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation method
+      options:
+        - conda environment (environment.yml) + editable install
+        - Editable install (pip install -e .)
+        - pip install (non-editable)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: >-
+        The `DAEMON_*` settings, `GRASP_BIN`, and storage path in effect — from the systemd
+        EnvironmentFile or the repo-root `.env`.
+        **Redact `DB_PASSWORD`, credentials, and internal hostnames.**
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: Job artifacts
+      description: >-
+        Optional but very helpful when a job failed. The job ID, plus relevant excerpts from the
+        job directory — `job.toml`, `run.log`, `manifest.json` — or the schema artifact involved.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: deployment
+    attributes:
+      label: Deployment context
+      description: >-
+        Optional. Anything about the environment that may matter — whether storage is a shared
+        network mount (NFS/SMB), whether the daemon and the queueing side run on separate hosts,
+        the service account used, and whether the failure is permission-related.
+    validations:
+      required: false
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: How much does this get in your way?
+      options:
+        - Low – cosmetic or minor annoyance
+        - Medium – functionality impaired but I can work around it
+        - High – blocks jobs from completing
+        - Critical – data loss or corruption, jobs stuck, or the daemon unusable
+    validations:
+      required: false
