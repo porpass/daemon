@@ -21,19 +21,34 @@ To report a vulnerability responsibly, please follow these steps:
 
 ## Our Response Process
 
-Once a vulnerability report is received, our core security team will:
+The daemon is maintained by a small team during the alpha, so please allow a
+few working days for an initial reply. Once a report is received we will:
 
-* **Acknowledge Receipt**: Confirm we received your report within 48 hours.
-* **Assess & Verify**: Evaluate the severity and scope of the bug within 7 business days.
-* **Develop a Patch**: Build and test a fix within a private repository or a private GitHub Security Advisory.
+* **Acknowledge Receipt**: Confirm we received your report.
+* **Assess & Verify**: Evaluate the severity and scope of the issue.
+* **Develop a Patch**: Build and test a fix privately, using a private GitHub
+  Security Advisory where appropriate.
 * **Release & Disclose**: Publish a patched version along with a public Security Advisory crediting you for the discovery (if desired).
 
 ## Scope & Non-Vulnerabilities
 
+This policy covers the daemon's own code, packaging, and deployment
+documentation. Reports are most relevant where they concern how the daemon
+handles credentials, stages files fetched from remote archives, or invokes
+GRaSP as a subprocess.
+
 The following types of issues are considered outside the scope of our security policy:
 * Outdated third-party dependencies without a practical exploit path in our code.
-* Missing security headers or configurations that do not directly lead to an exploit.
+* Issues that require pre-existing privileged access to the host, the database,
+  or the shared storage mount.
+* Operator configuration choices — for example an environment file left
+  world-readable, or over-broad database privileges granted to the daemon's
+  account. The deployment documentation covers the intended hardening.
+* Vulnerabilities in GRaSP itself, which should be reported to that project.
 * Vulnerabilities introduced entirely by custom modifications or third-party plug-ins.
 
 Thank you for helping keep this project safe for everyone!
 
+---
+
+<sub>Portions of this documentation were drafted with assistance from Claude Opus 4.8 (Anthropic), July 2026.</sub>

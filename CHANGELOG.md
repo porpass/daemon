@@ -3,6 +3,12 @@
 All notable changes to this project are documented here.
 The format is based on Keep a Changelog, and this project adheres to PEP 440 versioning.
 
+## [Unreleased]
+
+## [0.1.0a5] - 2026-07-21
+- Updated README, CONTRIBUTING, and SECURITY documents to be consistent with the current
+  release.
+ 
 ## [0.1.0a4] - 2026-07-20
 - Updated the README and deploy/README due to errors in the installation
   instructions. Generalized the language.

@@ -39,9 +39,9 @@ still reports the versions it last ran with.
 
 ```json
 {
-  "daemon": "0.1.0a2",
+  "daemon": "0.1.0a5",
   "grasp": "0.6.0a1",
-  "published_at": "2026-07-19T15:22:00Z"
+  "published_at": "2026-07-21T13:03:03Z"
 }
 ```
 
@@ -85,5 +85,18 @@ porpass-daemon            # run the worker loop
 pytest                    # run the test suite
 ```
 
+One-off commands, all of which exit rather than entering the poll loop:
+
+```sh
+porpass-daemon --publish-schemas                # publish schema artifacts to storage
+porpass-daemon --regenerate-schema --out DIR    # generate artifacts anywhere; no DB or storage needed
+porpass-daemon --reap-once                      # requeue stale 'running' jobs
+```
+
 `GRASP_BIN` may point at the real `grasp` console script or, in tests, a fake
-binary. See `deploy/README.md` for systemd installation on `proc`.
+binary. See [`deploy/README.md`](deploy/README.md) for the production systemd
+installation and the development (ad-hoc) workflow.
+
+---
+
+<sub>Portions of this documentation were drafted with assistance from Claude Opus 4.8 (Anthropic), July 2026.</sub>
